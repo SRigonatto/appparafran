@@ -1,0 +1,84 @@
+name: Compilar APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Preparar la carpeta web
+        run: |
+          test -f index.html || { echo "Falta index.html en la raíz del repositorio"; exit 1; }
+          mkdir -p www
+          cp index.html www/index.html
+
+      - name: Crear el proyecto Android
+        run: npx cap add android
+
+      - name: Generar el ícono
+        continue-on-error: true
+        run: |
+          pip install pillow
+          python3 make_icons.py
+          npx capacitor-assets generate --android
+
+      - name: Permitir el motor de voz en Android 11 o superior
+        run: |
+          python3 - <<'PY'
+          p = 'android/app/src/main/AndroidManifest.xml'
+          s = open(p, encoding='utf-8').read()
+          if 'TTS_SERVICE' not in s:
+              q = '    <queries>\n        <intent>\n            <action android:name="android.intent.action.TTS_SERVICE" />\n        </intent>\n    </queries>\n'
+              s = s.replace('</manifest>', q + '</manifest>')
+              open(p, 'w', encoding='utf-8').write(s)
+          PY
+
+      - name: Sincronizar la app con Android
+        run: npx cap sync android
+
+      - name: Compilar el APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Preparar el archivo
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk MiVoz.apk
+
+      - name: Guardar el APK como archivo de la ejecución
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiVoz-apk
+          path: MiVoz.apk
+
+      - name: Publicar el APK en Releases
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: Mi Voz (APK)
+          body: Última versión de Mi Voz. Descargá MiVoz.apk e instalalo en el celular Android.
+          files: MiVoz.apk
+          make_latest: true
